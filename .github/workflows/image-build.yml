@@ -158,7 +158,13 @@ jobs:
         shell: bash
         if: success() && env.DO_BUILD == 1
         run: |
-          git clone --depth=1 --branch ${BUILD_RELEASE_VERSION} https://github.com/DeepLcom/deepl-mock.git wv-deeplmockapi-server
+          git clone \
+            --depth=1 \
+            --branch ${BUILD_RELEASE_VERSION} \
+            https://github.com/DeepLcom/deepl-mock.git wv-deeplmockapi-server
+          
+          echo ">> Patch DeepL Mock Api Server Docker file to expose only port 3000"
+          sed "s/EXPOSE.*/EXPOSE 3000/g" wv-deeplmockapi-server/Dockerfile
 
       - name: Build and export to Docker
         uses: docker/build-push-action@v5
