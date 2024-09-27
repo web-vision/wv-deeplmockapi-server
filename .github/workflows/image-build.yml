@@ -186,7 +186,7 @@ jobs:
         run: |
           UNPUSHED_COUNT="$( git rev-list --count origin/${{ github.ref_name }}..${{ github.ref_name }} )"
           if [[ "${UNPUSHED_COUNT}" -eq 0 ]]; then            
-            if [[ "${}" ]]; then
+            if [[ "${FORCE_REBUILD}" -eq 1 ]]; then
               echo ">> No unpushed commits, but force rebuild requested: create release"
               echo "DO_RELEASE=1" >> $GITHUB_ENV
             else
