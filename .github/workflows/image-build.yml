@@ -243,11 +243,13 @@ jobs:
           [[ -z "${LATEST_RELEASE_TAG}" ]] && echo ">> ERR: empty LATEST_RELEASE_TAG" && exit 1
 
           if [[ "${TAG_VALID}" -eq 1 ]]; then
-            gh release create \
+            tar -czf .tarballs/image-source.tgz -C wv-deeplmockapi-server . \  
+              && gh release create \
                 ${IMAGE_VERSION_FULL} \
                 --generate-notes \
                 --verify-tag \
-                --title "[RELEASE] ${IMAGE_VERSION_FULL}: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}"
+                --title "[RELEASE] ${IMAGE_VERSION_FULL}: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}" \
+                .tarballs/*.tgz
             echo ">> Release created
           else
             echo ">> Failed to create release
