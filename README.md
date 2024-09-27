@@ -33,8 +33,18 @@ the changes - but no release or automatic change commits are created and pushed.
 Maintainer of the repository can do a force rebuild even for the same version, but only for the main branch by
 invoking the `image-build` workflow from the Github Action overview or by using the `github command line tool`.
 
-```terminal
-echo '{"forceRebuild": true, "tagMode": "patch"}' | gh workflow run image-build --repo webvision/wv-deeplmockapi 
+```bash
+gh workflow run \
+  image-build --repo web-vision/wv-deeplmockapi-server --ref main \
+  -f forceRebuild=true \
+  -f tagMode=patch
+```
+
+To see workflow runs use:
+
+```bash
+clear \
+  && gh run list --workflow=image-build.yml
 ```
 
 **forceRebuild**

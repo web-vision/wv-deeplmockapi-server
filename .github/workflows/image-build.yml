@@ -75,7 +75,7 @@ jobs:
         run: |
           # Create package (release) even if no new TYPO3 patchlevel version is available 
           forceRebuild="0"
-          [[ "${{ github.event.inputs.forceRebuild }}" == 'true' ]] && forceRebuild=1
+          [[ "${{ github.event.inputs.forceRebuild }}" == "true" ]] && forceRebuild=1
           
           # Define the version tag raise mode: major, minor or patch level
           # In case it was a schedule or push on main we fallback to the
@@ -185,11 +185,16 @@ jobs:
         if: success() && env.DO_BUILD == 1
         run: |
           UNPUSHED_COUNT="$( git rev-list --count origin/${{ github.ref_name }}..${{ github.ref_name }} )"
-          if [[ "${UNPUSHED_COUNT}" -eq 0 ]]; then
-            echo ">> No unpushed commits"
-            echo "DO_RELEASE=0" >> $GITHUB_ENV
+          if [[ "${UNPUSHED_COUNT}" -eq 0 ]]; then            
+            if [[ "${}" ]]; then
+              echo ">> No unpushed commits, but force rebuild requested: create release"
+              echo "DO_RELEASE=1" >> $GITHUB_ENV
+            else
+              echo ">> No unpushed commits, don't create release"
+              echo "DO_RELEASE=0" >> $GITHUB_ENV
+            fi            
           else
-            echo ">> Has unpushed commits"
+            echo ">> Has unpushed commits: create release"
             echo "DO_RELEASE=1" >> $GITHUB_ENV
           fi
 
