@@ -237,7 +237,7 @@ jobs:
             org.opencontainers.image.url=https://github.com/web-vision/wv-deeplmockapi-server/blob/main/README.md
             org.opencontainers.image.licenses=MIT            
 
-      - name: Create release
+      - name: "Create release ${{ env.IMAGE_VERSION_FULL }}: ${{ env.LATEST_USED_RELEASE }} => ${{ env.LATEST_RELEASE_TAG }}"
         shell: bash
         if: success() && env.DO_RELEASE == 1 && github.event_name != 'push' && github.event_name != 'pull_request' && github.ref_name == 'main' && env.DO_RELEASE == 1 && env.TAG_VALID == 1
         env:
@@ -248,8 +248,8 @@ jobs:
           [[ -z "${LATEST_RELEASE_TAG}" ]] && echo ">> ERR: empty LATEST_RELEASE_TAG" && exit 1
 
           if [[ "${TAG_VALID}" -eq 1 ]]; then
-            tar -czf .tarballs/image-source.tgz -C wv-deeplmockapi-server . \  
-              && gh release create \
+            tar -czf .tarballs/image-source.tgz -C wv-deeplmockapi-server .
+            gh release create \
                 ${IMAGE_VERSION_FULL} \
                 --generate-notes \
                 --verify-tag \
