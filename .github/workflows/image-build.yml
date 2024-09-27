@@ -1,0 +1,254 @@
+name: image-build
+run-name: "[${{ github.event_name }}] Package build by @${{ github.actor }}"
+
+on:
+  schedule:
+    - cron: "10 */8 * * *"
+  workflow_dispatch:
+    inputs:
+      forceRebuild:
+        type: boolean
+        description: Force package creation.
+        default: false
+        required: true
+      tagMode:
+        type: choice
+        description: Version raise mode.
+        required: true
+        default: 'patch'
+        options:
+          - major
+          - minor
+          - patch
+  push:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronized
+      - ready_for_review
+    branches:
+      - main
+
+jobs:
+  build:
+    if: ${{ (github.event_name == 'scheduled' && github.ref_name == 'name') || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main' ) || (github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') }}
+    runs-on: ubuntu-latest
+    permissions:
+      # actions: read|write|none
+      actions: none
+      # checks: read|write|none
+      checks: none
+      # contents: read|write|none
+      contents: write
+      # deployments: read|write|none
+      deployments: none
+      # id-token: read|write|none
+      id-token: none
+      # issues: read|write|none
+      issues: none
+      # discussions: read|write|none
+      discussions: none
+      # packages: read|write|none
+      packages: write
+      # pages: read|write|none
+      pages: none
+      # pull-requests: read|write|none
+      pull-requests: none
+      # repository-projects: read|write|none
+      repository-projects: read
+      # security-events: read|write|none
+      security-events: none
+      # statuses: read|write|none
+      statuses: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Checkout everything to get access to the tags
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Prepare control flags
+        run: |
+          # Create package (release) even if no new TYPO3 patchlevel version is available 
+          forceRebuild="0"
+          [[ "${{ github.event.inputs.forceRebuild }}" == 'true' ]] && forceRebuild=1
+          
+          # Define the version tag raise mode: major, minor or patch level
+          # In case it was a schedule or push on main we fallback to the
+          # --patch level. In case of an `workflow_dispatch` this is set
+          # as option.
+          versionTagMode="--patch"
+          [[ -n "${{ github.event.inputs.tagMode }}" ]] && versionTagMode="--${{ github.event.inputs.tagMode }}"
+                 
+          # on main brach push events we also enforces a full rebuild, even if no update occured
+          doOnlyBuild=0
+          [[ "${{ github.event_name }}" == "push" ]] && doOnlyBuild=1 && forceRebuild=1
+          [[ "${{ github.event_name }}" == "push_request" ]] && doOnlyBuild=1 && forceRebuild=1
+          
+          # push prepared flags as environment variables
+          echo "VERSION_TAG_MODE=${versionTagMode}" >> $GITHUB_ENV
+          echo "FORCE_REBUILD=${forceRebuild}" >> $GITHUB_ENV
+          echo "DO_ONLY_BUILD=${doOnlyBuild}" >> $GITHUB_ENV                  
+
+      - name: Set git commit author
+        shell: bash
+        run: |
+          git config --global user.email "support@web-vision.de" \
+            && git config --global user.name "[CI]"
+
+      - name: Check for version update
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DO_BUILD=0
+          LATEST_RELEASE_TAG="$( gh release list --repo DeepLcom/deepl-mock --json createdAt,isDraft,isLatest,isPrerelease,name,publishedAt,tagName --jq '.[] | select(.isLatest) | .tagName' )"
+          LATEST_USED_RELEASE="$( cat version.json | jq -r '.release' )"
+          echo "LATEST_RELEASE_TAG=${LATEST_RELEASE_TAG}" >> $GITHUB_ENV
+          echo "LATEST_USED_RELEASE=${LATEST_USED_RELEASE}" >> $GITHUB_ENV
+          [[ -z ""${LATEST_RELEASE_TAG}"" ]] && echo "ERR: Failed to retrieve deeplmock api latest release tag" && exit 1
+          [[ -z ""${LATEST_USED_RELEASE}"" ]] && echo "ERR: Failed to read latest used deeplmock api release version" && exit 1
+          BUILD_RELEASE_VERSION="${LATEST_USED_RELEASE}"
+          if [[ "${LATEST_RELEASE_TAG}" != "${LATEST_USED_RELEASE}" ]]; then
+            VERSION_CONTENT="$( jq --arg LATEST_RELEASE_TAG "${LATEST_RELEASE_TAG}" '.release = $LATEST_RELEASE_TAG' version.json )"
+            echo -E "${VERSION_CONTENT}" >version.json
+            echo ">> Image release version updated: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}"
+            COMMIT_MSG="[TASK] Raised deeplmock-api version: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}"
+            git add version.json \
+              && git commit --author="[CI] <support@web-vision.de>" -m "${COMMIT_MSG}" -m "on-behalf-of: @web-vision <support@web-vision.de>" \
+              && echo ">> Git commit created" \
+              && DO_BUILD=1 \
+              && BUILD_RELEASE_VERSION="${LATEST_RELEASE_TAG}" \
+              || exit 1
+          fi
+          
+          if [[ "${DO_BUILD}" -eq 1 ]]; then
+            echo ">> Build requested due to changes"
+          elif [[ "${FORCE_REBUILD:-0}" -eq 1 ]]; then
+            echo ">> Forced rebuild even without changes"
+            DO_BUILD=1
+          else
+            echo ">> Nothing to do"          
+          fi
+          
+          echo "DO_BUILD=${DO_BUILD}" >> $GITHUB_ENV
+          echo "BUILD_RELEASE_VERSION=${BUILD_RELEASE_VERSION}" >> $GITHUB_ENV
+          exit 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        if: env.DO_BUILD == 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        if: success() && env.DO_BUILD == 1
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare docker context folder
+        shell: bash
+        if: success() && env.DO_BUILD == 1
+        run: |
+          git clone --depth=1 --branch ${BUILD_RELEASE_VERSION} https://github.com/DeepLcom/deepl-mock.git wv-deeplmockapi-server
+
+      - name: Build and export to Docker
+        uses: docker/build-push-action@v5
+        if: success() && env.DO_BUILD == 1
+        with:
+          context: wv-deeplmockapi-server
+          push: false
+          load: false
+          provenance: false
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/web-vision/wv-deeplmockapi-server:test
+          labels: |
+            org.opencontainers.image.title="DeepL Mock Api Server"
+            org.opencontainers.image.description="Image containing the DeepL Mock Api Server"
+            org.opencontainers.image.vendor="web-vision GmbH"
+            org.opencontainers.image.authors="Stefan Bürk <stefan@buerk.tech>"
+            org.opencontainers.image.source=https://github.com/web-vision/wv-deeplmockapi-server
+            org.opencontainers.image.url=https://github.com/web-vision/wv-deeplmockapi-server/blob/main/README.md
+            org.opencontainers.image.licenses=MIT
+
+      - name: Check for not pushed commit(s)
+        shell: bash
+        if: success() && env.DO_BUILD == 1
+        run: |
+          UNPUSHED_COUNT="$( git rev-list --count origin/${{ github.ref_name }}..${{ github.ref_name }} )"
+          if [[ "${UNPUSHED_COUNT}" -eq 0 ]]; then
+            echo ">> No unpushed commits"
+            echo "DO_RELEASE=0" >> $GITHUB_ENV
+          else
+            echo ">> Has unpushed commits"
+            echo "DO_RELEASE=1" >> $GITHUB_ENV
+          fi
+
+      - name: "Create commit tag ${{ env.VERSION_TAG_MODE }}"
+        shell: bash
+        if: success() && env.DO_RELEASE == 1
+        run: |
+          echo ">> scripts/versions-up.sh --release ${VERSION_TAG_MODE:-\"--patch\"} --apply"
+          scripts/versions-up.sh --release ${VERSION_TAG_MODE:-"--patch"} --apply
+          IMAGE_VERSION_FULL="$( git tag --points-at HEAD )"
+          IMAGE_VERSION_SHORT="${IMAGE_VERSION_FULL}"
+          [[ -n "${IMAGE_VERSION_FULL}" ]] && PARTS=(${IMAGE_VERSION_FULL//./ }) && IMAGE_VERSION_SHORT="${PARTS[0]}.${PARTS[0]}"
+          [[ -z "${IMAGE_VERSION_FULL}" ]] && echo ">> NO TAG FOUND" && echo "TAG_VALID=0" >> $GITHUB_ENV && echo "IMAGE_VERSION_FULL=${IMAGE_VERSION_FULL}" >> $GITHUB_ENV && echo "IMAGE_VERSION_SHORT=${IMAGE_VERSION_SHORT}" >> $GITHUB_ENV
+          [[ -n "${IMAGE_VERSION_FULL}" ]] && echo ">> TAG FOUND" && echo "TAG_VALID=1" >> $GITHUB_ENV && echo "IMAGE_VERSION_FULL=${IMAGE_VERSION_FULL}" >> $GITHUB_ENV && echo "IMAGE_VERSION_SHORT=${IMAGE_VERSION_SHORT}" >> $GITHUB_ENV
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        if: success() && env.DO_RELEASE == 1 && github.event_name != 'push' && github.event_name != 'pull_request' && github.ref_name == 'main' && env.DO_RELEASE == 1 && env.TAG_VALID == 1
+        with:
+          tags: true
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        if: success() && env.DO_RELEASE == 1 && github.event_name != 'push' && github.event_name != 'pull_request' && github.ref_name == 'main' && env.DO_RELEASE == 1 && env.TAG_VALID == 1
+        with:
+          context: wv-deeplmockapi-server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/web-vision/wv-deeplmockapi-server:${{ env.IMAGE_VERSION_FULL }}
+            ghcr.io/web-vision/wv-deeplmockapi-server:${{ env.IMAGE_VERSION_SHORT }}
+            ghcr.io/web-vision/wv-deeplmockapi-server:latest
+          labels: |
+            org.opencontainers.image.title="DeepL Mock Api Server"
+            org.opencontainers.image.description="Image containing the DeepL Mock Api Server"
+            org.opencontainers.image.vendor="web-vision GmbH"
+            org.opencontainers.image.authors="Stefan Bürk <stefan@buerk.tech>"
+            org.opencontainers.image.source=https://github.com/web-vision/wv-deeplmockapi-server
+            org.opencontainers.image.url=https://github.com/web-vision/wv-deeplmockapi-server/blob/main/README.md
+            org.opencontainers.image.licenses=MIT            
+
+      - name: Create release
+        shell: bash
+        if: success() && env.DO_RELEASE == 1 && github.event_name != 'push' && github.event_name != 'pull_request' && github.ref_name == 'main' && env.DO_RELEASE == 1 && env.TAG_VALID == 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ -z "${IMAGE_VERSION_FULL}" ]] && echo ">> ERR: empty IMAGE_VERSION_FULL" && exit 1
+          [[ -z "${LATEST_USED_RELEASE}" ]] && echo ">> ERR: empty LATEST_USED_RELEASE" && exit 1
+          [[ -z "${LATEST_RELEASE_TAG}" ]] && echo ">> ERR: empty LATEST_RELEASE_TAG" && exit 1
+
+          if [[ "${TAG_VALID}" -eq 1 ]]; then
+            gh release create \
+                ${IMAGE_VERSION_FULL} \
+                --generate-notes \
+                --verify-tag \
+                --title "[RELEASE] ${IMAGE_VERSION_FULL}: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}"
+            echo ">> Release created
+          else
+            echo ">> Failed to create release
+          fi

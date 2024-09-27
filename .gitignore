@@ -1,0 +1,5 @@
+# ide's
+/.idea
+#
+# scripts/version-up.sh artifacts
+/version.properties
