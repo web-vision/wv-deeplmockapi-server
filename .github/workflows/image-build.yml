@@ -26,14 +26,14 @@ on:
       - opened
       - edited
       - reopened
-      - synchronized
+      - synchronize
       - ready_for_review
     branches:
       - main
 
 jobs:
   build:
-    if: ${{ (github.event_name == 'scheduled' && github.ref_name == 'name') || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main' ) || (github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') }}
+    if: ${{ (github.event_name == 'schedule' && github.ref_name == 'main') || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main' ) || (github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') }}
     runs-on: ubuntu-latest
     permissions:
       # actions: read|write|none
@@ -87,7 +87,7 @@ jobs:
           # on main brach push events we also enforces a full rebuild, even if no update occured
           doOnlyBuild=0
           [[ "${{ github.event_name }}" == "push" ]] && doOnlyBuild=1 && forceRebuild=1
-          [[ "${{ github.event_name }}" == "push_request" ]] && doOnlyBuild=1 && forceRebuild=1
+          [[ "${{ github.event_name }}" == "pull_request" ]] && doOnlyBuild=1 && forceRebuild=1
           
           # push prepared flags as environment variables
           echo "VERSION_TAG_MODE=${versionTagMode}" >> $GITHUB_ENV
@@ -106,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           DO_BUILD=0
-          LATEST_RELEASE_TAG="$( gh release list --repo DeepLcom/deepl-mock --json createdAt,isDraft,isLatest,isPrerelease,name,publishedAt,tagName --jq '.[] | select(.isLatest) | .tagName' )"
+          LATEST_RELEASE_TAG="$( gh release list --repo DeepL/deepl-mock --json createdAt,isDraft,isLatest,isPrerelease,name,publishedAt,tagName --jq '.[] | select(.isLatest) | .tagName' )"
           LATEST_USED_RELEASE="$( cat version.json | jq -r '.release' )"
           echo "LATEST_RELEASE_TAG=${LATEST_RELEASE_TAG}" >> $GITHUB_ENV
           echo "LATEST_USED_RELEASE=${LATEST_USED_RELEASE}" >> $GITHUB_ENV
@@ -161,7 +161,7 @@ jobs:
           git clone \
             --depth=1 \
             --branch ${BUILD_RELEASE_VERSION} \
-            https://github.com/DeepLcom/deepl-mock.git wv-deeplmockapi-server
+            https://github.com/DeepL/deepl-mock.git wv-deeplmockapi-server
           
 #          echo ">> Patch DeepL Mock Api Server Docker file to expose only port 3000"
 #          sed "s/EXPOSE.*/EXPOSE 3000/g" wv-deeplmockapi-server/Dockerfile
@@ -212,7 +212,7 @@ jobs:
           scripts/versions-up.sh --release ${VERSION_TAG_MODE:-"--patch"} --apply
           IMAGE_VERSION_FULL="$( git tag --points-at HEAD )"
           IMAGE_VERSION_SHORT="${IMAGE_VERSION_FULL}"
-          [[ -n "${IMAGE_VERSION_FULL}" ]] && PARTS=(${IMAGE_VERSION_FULL//./ }) && IMAGE_VERSION_SHORT="${PARTS[0]}.${PARTS[0]}"
+          [[ -n "${IMAGE_VERSION_FULL}" ]] && PARTS=(${IMAGE_VERSION_FULL//./ }) && IMAGE_VERSION_SHORT="${PARTS[0]}.${PARTS[1]}"
           [[ -z "${IMAGE_VERSION_FULL}" ]] && echo ">> NO TAG FOUND" && echo "TAG_VALID=0" >> $GITHUB_ENV && echo "IMAGE_VERSION_FULL=${IMAGE_VERSION_FULL}" >> $GITHUB_ENV && echo "IMAGE_VERSION_SHORT=${IMAGE_VERSION_SHORT}" >> $GITHUB_ENV
           [[ -n "${IMAGE_VERSION_FULL}" ]] && echo ">> TAG FOUND" && echo "TAG_VALID=1" >> $GITHUB_ENV && echo "IMAGE_VERSION_FULL=${IMAGE_VERSION_FULL}" >> $GITHUB_ENV && echo "IMAGE_VERSION_SHORT=${IMAGE_VERSION_SHORT}" >> $GITHUB_ENV
 
@@ -261,7 +261,7 @@ jobs:
                 --verify-tag \
                 --title "[RELEASE] ${IMAGE_VERSION_FULL}: ${LATEST_USED_RELEASE} => ${LATEST_RELEASE_TAG}" \
                 .tarballs/*.tgz
-            echo ">> Release created
+            echo ">> Release created"
           else
-            echo ">> Failed to create release
+            echo ">> Failed to create release"
           fi
